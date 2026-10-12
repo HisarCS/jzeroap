@@ -70,6 +70,11 @@ async function route() {
 }
 
 function login() {
+  if (/YOUR-/.test(CFG.SUPABASE_URL + CFG.SUPABASE_ANON_KEY)) {
+    app.innerHTML = `<div class="card" style="max-width:520px;margin:40px auto"><h1>☕ JavaZero</h1>
+      <p class="warn"><b>Setup not finished.</b> The Supabase project is not connected yet (docs/config.js still has placeholder values), so sign-in cannot work.</p></div>`;
+    return;
+  }
   app.innerHTML = `<div class="card" style="max-width:420px;margin:40px auto;text-align:center">
     <h1>☕ JavaZero</h1>
     <p>Waterloo CCC ve AP CSA için seviyeli Java pratiği.</p>
