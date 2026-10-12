@@ -47,11 +47,12 @@ function nav() {
   $("#who")?.addEventListener("click", () => { if (confirm("Switch student? Your progress stays saved in this browser for the next sign-in.")) { st.name = ""; st.email = ""; location.hash = "/"; route(); } });
 }
 
+let pending = "";   // link the student opened before signing in
 function route() {
   nav();
   const [path, ...rest] = location.hash.replace(/^#\/?/, "").replace(/\?.*/, "").split("/");
   if (path === "admin") return admin();
-  if (!st.name) return welcome();
+  if (!st.name) { if (path === "p") pending = location.hash; return welcome(); }
   if (path === "p" && QM[rest[0]]) return problemPage(QM[rest[0]]);
   if (path === "me") return me();
   if (path === "share") return share();
@@ -63,15 +64,15 @@ function welcome() {
     <div class="big">☕ JavaZero</div>
     <div class="badge">AP CSA · Hisar 2026–2027</div>
     <p class="muted">Practice Java from easy to hard — Unit 1 and Unit 2. Every question is checked instantly.</p>
-    <label>Your name</label><input id="nm" autocomplete="name" placeholder="First Last">
-    <label>School e-mail</label><input id="em" type="email" autocomplete="email" placeholder="name@${DOMAIN}">
+    <label for="nm">Your name</label><input id="nm" autocomplete="name" placeholder="First Last">
+    <label for="em">School e-mail</label><input id="em" type="email" autocomplete="email" placeholder="name@${DOMAIN}">
     <p><button class="btn big-btn" id="go">Start</button></p><div id="msg"></div>
     <p class="muted" style="font-size:13px">Your progress is saved in this browser. Teacher? <a href="#/admin">Open the class view</a>.</p></div>`;
   const go = () => {
     const name = $("#nm").value.trim().replace(/\s+/g, " "), email = $("#em").value.trim().toLowerCase();
     if (!name) return ($("#msg").innerHTML = '<p class="warn">Please enter your name.</p>');
     if (!email.endsWith("@" + DOMAIN)) return ($("#msg").innerHTML = `<p class="warn">Please use your school e-mail (…@${DOMAIN}).</p>`);
-    st.name = name; st.email = email; save(); location.hash = "/"; route();
+    st.name = name; st.email = email; save(); location.hash = pending || "/"; pending = ""; route();
   };
   $("#go").onclick = go;
   app.querySelectorAll("input").forEach((i) => i.addEventListener("keydown", (e) => e.key === "Enter" && go()));
@@ -128,13 +129,39 @@ function home() {
 }
 
 /* ---------------- running code ---------------- */
-async function judge(source, stdin) {
-  const r = await fetch(`${JUDGE0}/submissions?base64_encoded=false&wait=true`, {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Calls the code runner; retries when it is busy and explains failures in plain words.
+async function api(path, opts, tries = 3) {
+  let msg = "";
+  for (let i = 0; i < tries; i++) {
+    try {
+      const r = await fetch(JUDGE0 + path, opts);
+      if (r.ok) return await r.json();
+      if (r.status !== 429 && r.status < 500) throw new Error(`The code runner refused the request (${r.status}).`);
+      msg = r.status === 429 ? "The code runner is busy right now." : "The code runner is having trouble.";
+    } catch (e) {
+      if (/refused/.test(e.message)) throw e;
+      msg = "Cannot reach the code runner — check your internet connection.";
+    }
+    await sleep(1200 * (i + 1));
+  }
+  throw new Error(msg + " Nothing was counted. Please try again in a few seconds.");
+}
+// Runs one program against several inputs at the same time (one batch request, then polling).
+async function judgeMany(source, inputs) {
+  const created = await api("/submissions/batch?base64_encoded=false", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ language_id: 62, source_code: source, stdin, cpu_time_limit: 3, memory_limit: 256000 }),
+    body: JSON.stringify({ submissions: inputs.map((stdin) => ({ language_id: 62, source_code: source, stdin, cpu_time_limit: 3, memory_limit: 256000 })) }),
   });
-  if (!r.ok) throw new Error("The code runner returned " + r.status + ". Try again in a moment.");
-  return r.json();
+  const tokens = created.map((x) => x.token);
+  if (tokens.some((t) => !t)) throw new Error("The code runner rejected the program. Nothing was counted.");
+  const t0 = Date.now();
+  for (;;) {
+    await sleep(Date.now() - t0 < 1500 ? 600 : 800);
+    const res = await api(`/submissions/batch?tokens=${tokens.join(",")}&base64_encoded=false&fields=status,stdout,stderr,compile_output`);
+    if (res.submissions.every((s) => s.status && s.status.id > 2)) return res.submissions;
+    if (Date.now() - t0 > 45000) throw new Error("The code runner took too long. Nothing was counted. Please try again.");
+  }
 }
 function combine(student, harness) {
   const imports = [];
@@ -147,16 +174,17 @@ const norm = (s) => String(s ?? "").replace(/\s+/g, "");
 
 async function runTests(p, code, tests) {
   const src = p.kind === "project" ? combine(code, p.harness) : code;
-  const cases = [];
-  for (const t of tests) {
-    const r = await judge(src, t.input ?? "");
-    const out = (r.stdout ?? "").trim();
-    cases.push({ ok: out === String(t.output).trim() && r.status?.id === 3, status: r.status?.description, input: t.input, expected: t.output, got: out, error: r.compile_output || r.stderr });
-  }
-  return cases;
+  const res = await judgeMany(src, tests.map((t) => t.input ?? ""));
+  return res.map((r, i) => {
+    const out = (r.stdout ?? "").trim(), t = tests[i];
+    return { ok: out === String(t.output).trim() && r.status?.id === 3, status: r.status?.description, input: t.input, expected: t.output, got: out, error: r.compile_output || r.stderr };
+  });
 }
 
 /* ---------------- problem page ---------------- */
+const loadDraft = (id) => { try { return localStorage.getItem("jz:d:" + id); } catch { return null; } };
+const saveDraft = (id, v) => { try { v == null ? localStorage.removeItem("jz:d:" + id) : localStorage.setItem("jz:d:" + id, v); } catch {} };
+
 function problemPage(p) {
   const s = sub(p.id);
   let input = "";
@@ -166,9 +194,12 @@ function problemPage(p) {
   } else if (p.kind === "mcq") {
     input = p.choices.map((c, i) => `<label class="choice"><input type="radio" name="c" value="${i}">${"ABCDE"[i]}) ${esc(c)}</label>`).join("");
   } else {
+    const draft = loadDraft(p.id);
     const label = p.kind === "project" ? "Write your class(es). No main method needed; you don't have to write public." : p.kind === "debug" ? "Fix the buggy code" : "Java code (class <code>Main</code>, read input with Scanner)";
     const def = p.starter || (p.kind === "code" ? "import java.util.*;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner sc = new Scanner(System.in);\n        \n    }\n}\n" : "");
-    input = `<label>${label}</label><textarea class="code" id="code" spellcheck="false">${esc(s.last || def)}</textarea>`;
+    input = `<label for="code">${label}</label><textarea class="code" id="code" spellcheck="false" aria-describedby="codehint">${esc(draft ?? s.last ?? def)}</textarea>
+      <div class="row muted" style="font-size:13px" id="codehint"><span class="grow">Tab inserts spaces · press Esc, then Tab to leave the box · Ctrl+Enter ${p.kind === "mcq" ? "submits" : "runs the samples"} · your code is saved as you type</span><a href="#" id="reset">Reset code</a></div>`;
+    window.__def = def;
   }
   const hasRun = ["code", "debug", "project"].includes(p.kind);
   app.innerHTML = `
@@ -182,7 +213,16 @@ function problemPage(p) {
     <div id="res"></div>
     <div id="sol" style="margin-top:14px"><button class="btn alt" id="peek">Show the solution</button> <span class="muted">${s.peeked ? "(you already looked at it)" : "(your teacher can see that you looked)"}</span></div>`;
   const ta = $("#code");
-  ta?.addEventListener("keydown", (e) => { if (e.key === "Tab") { e.preventDefault(); ta.setRangeText("    ", ta.selectionStart, ta.selectionEnd, "end"); } });
+  ta?.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") ta.dataset.free = "1";
+    else if (e.key === "Tab" && !ta.dataset.free && !e.shiftKey) { e.preventDefault(); ta.setRangeText("    ", ta.selectionStart, ta.selectionEnd, "end"); ta.dispatchEvent(new Event("input")); }
+    else if (e.key === "Tab") delete ta.dataset.free;
+    else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); ($("#run") || $("#sub")).click(); }
+    else delete ta.dataset.free;
+  });
+  let dt;
+  ta?.addEventListener("input", () => { clearTimeout(dt); dt = setTimeout(() => saveDraft(p.id, ta.value), 300); });
+  $("#reset")?.addEventListener("click", (e) => { e.preventDefault(); if (confirm("Reset to the starting code? Your current code in this box will be lost.")) { ta.value = window.__def; saveDraft(p.id, null); } });
   const content = () => {
     const bl = [...app.querySelectorAll(".blank")];
     return bl.length ? bl.map((b) => b.value) : ta ? ta.value : document.querySelector("input[name=c]:checked")?.value;
@@ -259,56 +299,111 @@ function me() {
 }
 
 /* ---------------- share with teacher ---------------- */
-const b64 = (o) => btoa(unescape(encodeURIComponent(JSON.stringify(o)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-const unb64 = (s) => JSON.parse(decodeURIComponent(escape(atob(s.trim().replace(/-/g, "+").replace(/_/g, "/")))));
-function shareCode() {
-  const s = {};
-  Object.entries(st.subs).forEach(([id, v]) => { if (v.tries || v.peeked) s[id] = [v.best, v.tries, v.peeked ? 1 : 0, v.at || ""]; });
-  return "JZ1." + b64({ n: st.name, e: st.email, t: new Date().toISOString(), s });
+const b64u = (bytes) => { let s = ""; for (let i = 0; i < bytes.length; i += 8192) s += String.fromCharCode(...bytes.subarray(i, i + 8192)); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); };
+const unb64u = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+async function pipe(bytes, stream) { return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer()); }
+const canZip = typeof CompressionStream !== "undefined" && typeof DecompressionStream !== "undefined";
+const fnv = (s) => { let h = 0x811c9dc5; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(36); };
+
+// Compact format (JZ2): one short entry per attempted question, compressed. The checksum only detects accidental edits.
+async function shareCode() {
+  const items = Object.entries(st.subs).filter(([id, v]) => QM[id] && (v.tries || v.peeked)).map(([id, v]) => [id.slice(0, 6), v.best, v.tries, v.peeked ? 1 : 0].join("."));
+  const last = Object.values(st.subs).reduce((a, v) => (v.at && v.at > a ? v.at : a), "");
+  const body = { n: st.name, e: st.email, t: last || new Date().toISOString(), s: items.join(";") };
+  body.c = fnv(body.n + "|" + body.e + "|" + body.s);
+  const bytes = new TextEncoder().encode(JSON.stringify(body));
+  return canZip ? "JZ2z." + b64u(await pipe(bytes, new CompressionStream("deflate-raw"))) : "JZ2." + b64u(bytes);
 }
-function share() {
-  const code = shareCode();
-  app.innerHTML = `<h1>Share my progress</h1><p>Send this code to your teacher (e-mail, Teams, Classroom). It contains your name, e-mail and scores — no code you wrote.</p>
-    <textarea id="code" rows="5" readonly style="font-family:monospace">${code}</textarea>
-    <div class="row" style="margin-top:8px"><button class="btn" id="cp">Copy</button><button class="btn alt" id="dl">Download file</button></div><div id="msg"></div>`;
+async function share() {
+  app.innerHTML = '<h1>Send my progress to the teacher</h1><p class="muted">Preparing…</p>';
+  const code = await shareCode();
+  app.innerHTML = `<h1>Send my progress to the teacher</h1><p>Copy this code and send it to your teacher (e-mail, Teams, Classroom). It contains your name, e-mail and scores — not the code you wrote.</p>
+    <textarea id="code" rows="4" readonly style="font-family:monospace" aria-label="Progress code">${code}</textarea>
+    <div class="row" style="margin-top:8px"><button class="btn" id="cp">Copy</button><button class="btn alt" id="dl">Download file</button></div><div id="msg" role="status"></div>`;
   $("#cp").onclick = async () => { try { await navigator.clipboard.writeText(code); } catch { $("#code").select(); document.execCommand("copy"); } $("#msg").innerHTML = '<p class="ok">Copied ✓</p>'; };
-  $("#dl").onclick = () => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([code], { type: "text/plain" })); a.download = `javazero-${st.name.replace(/\W+/g, "_")}.txt`; a.click(); };
+  $("#dl").onclick = () => { const l = document.createElement("a"); l.href = URL.createObjectURL(new Blob([code], { type: "text/plain" })); l.download = `javazero-${st.name.replace(/\W+/g, "_")}.txt`; l.click(); };
+}
+
+// Turns one pasted code into a clean record, or throws a readable error. Never trusts the input.
+async function parseCode(tok) {
+  const prefix = {}; Q.forEach((p) => (prefix[p.id.slice(0, 6)] = p));
+  let o, v2 = false;
+  try {
+    if (tok.startsWith("JZ2z.")) { o = JSON.parse(new TextDecoder().decode(await pipe(unb64u(tok.slice(5)), new DecompressionStream("deflate-raw")))); v2 = true; }
+    else if (tok.startsWith("JZ2.")) { o = JSON.parse(new TextDecoder().decode(unb64u(tok.slice(4)))); v2 = true; }
+    else if (tok.startsWith("JZ1.")) o = JSON.parse(new TextDecoder().decode(unb64u(tok.slice(4))));
+    else throw 0;
+  } catch { throw new Error("not a JavaZero code"); }
+  if (!o || typeof o !== "object" || Array.isArray(o)) throw new Error("not a JavaZero code");
+  const n = typeof o.n === "string" ? o.n.trim().slice(0, 80) : "", e = typeof o.e === "string" ? o.e.trim().toLowerCase().slice(0, 120) : "";
+  if (!n || !e.endsWith("@" + DOMAIN)) throw new Error("missing name or school e-mail");
+  const w = [], s = {};
+  const put = (p, best, tries, peeked) => {
+    best = Math.floor(Number(best)); tries = Math.floor(Number(tries));
+    if (!(best >= 0) || !(tries >= 0)) return;
+    if (best > p.points) { w.push("score above the maximum"); best = p.points; }
+    s[p.id] = [best, Math.min(tries, 999), peeked ? 1 : 0, ""];
+  };
+  if (v2) {
+    if (typeof o.s !== "string") throw new Error("damaged code");
+    if (o.c !== fnv(n + "|" + e + "|" + o.s)) w.push("code was edited after it was created");
+    o.s.split(";").filter(Boolean).slice(0, 500).forEach((it) => { const [id6, b, t, pk] = it.split("."); if (prefix[id6]) put(prefix[id6], b, t, pk === "1"); });
+  } else {
+    if (!o.s || typeof o.s !== "object" || Array.isArray(o.s)) throw new Error("damaged code");
+    Object.entries(o.s).slice(0, 500).forEach(([id, a]) => { const p = Q.find((x) => x.id === id); if (p && Array.isArray(a)) put(p, a[0], a[1], a[2]); });
+    w.push("old code format (not checked)");
+  }
+  const t = Date.parse(o.t) ? new Date(o.t).toISOString() : new Date().toISOString();
+  return { n, e, t, s, w: [...new Set(w)] };
 }
 
 /* ---------------- teacher: class view from pasted codes ---------------- */
-function loadClass() { try { return JSON.parse(localStorage.getItem("jz:class")) || {}; } catch { return {}; } }
+function loadClass() {
+  try {
+    const c = JSON.parse(localStorage.getItem("jz:class")) || {}, out = {};
+    for (const [k, r] of Object.entries(c)) {
+      if (!r || typeof r.n !== "string" || !r.s || typeof r.s !== "object" || Array.isArray(r.s)) continue;   // skip damaged records
+      const s = {}; for (const [id, a] of Object.entries(r.s)) if (Array.isArray(a) && Number.isFinite(+a[0])) s[id] = a;
+      out[k] = { n: r.n, e: String(r.e || k), t: r.t, s, w: Array.isArray(r.w) ? r.w : [] };
+    }
+    return out;
+  } catch { return {}; }
+}
 function admin() {
   const cls = loadClass();
-  const rows = Object.values(cls).sort((a, b) => a.n.localeCompare(b.n));
-  const subsOf = (r) => Object.fromEntries(Object.entries(r.s).map(([id, a]) => [id, { best: a[0], tries: a[1], peeked: a[2], at: a[3] }]));
-  const total = (r) => Q.reduce((a, p) => a + Math.min(r.s[p.id]?.[0] || 0, p.points), 0);
+  const rows = Object.values(cls).sort((x, y) => x.n.localeCompare(y.n));
+  const total = (r) => Q.reduce((acc, p) => acc + Math.min(r.s[p.id]?.[0] || 0, p.points), 0);
+  const subsOf = (r) => Object.fromEntries(Object.entries(r.s).map(([id, v]) => [id, { best: v[0], tries: v[1], peeked: v[2], at: v[3] }]));
   const params = new URLSearchParams(location.hash.split("?")[1] || "");
-  const topics = [...new Set(Q.map((p) => p.topic))].sort(topicSort), topic = params.get("topic") || topics[0];
-  const cols = Q.filter((p) => p.topic === topic).sort((a, b) => a.d - b.d);
+  const topics = [...new Set(Q.map((p) => p.topic))].sort(topicSort), topic = topics.includes(params.get("topic")) ? params.get("topic") : topics[0];
+  const cols = Q.filter((p) => p.topic === topic).sort((x, y) => x.d - y.d);
   const units = [...new Set(topics.map(unitOf))];
   const cell = (r, p) => {
-    const a = r.s[p.id]; if (!a) return '<td class="muted" style="text-align:center">·</td>';
-    const cls = a[0] >= p.points ? "ok" : a[0] > 0 ? "warn" : "bad";
-    return `<td class="${cls}" style="text-align:center" title="${a[0]}/${p.points} · ${a[1]} tries${a[2] ? " · looked at solution" : ""}">${a[0] >= p.points ? "✓" : a[0]}${a[2] ? "👁" : ""}</td>`;
+    const v = r.s[p.id]; if (!v) return '<td class="muted" style="text-align:center">·</td>';
+    const cls2 = v[0] >= p.points ? "ok" : v[0] > 0 ? "warn" : "bad";
+    return `<td class="${cls2}" style="text-align:center" title="${v[0]}/${p.points} · ${v[1]} tries${v[2] ? " · looked at solution" : ""}">${v[0] >= p.points ? "✓" : v[0]}${v[2] ? "👁" : ""}</td>`;
   };
   app.innerHTML = `<h1>Teacher: class view</h1>
     <div class="card"><b>Add student codes</b> <span class="muted">(paste one code per line, or choose the files students sent)</span>
-      <textarea id="paste" rows="3" placeholder="JZ1...." style="font-family:monospace"></textarea>
-      <div class="row" style="margin-top:6px"><button class="btn" id="add">Add</button><input type="file" id="files" accept=".txt,.json" multiple style="width:auto"><button class="btn alt" id="clear">Clear class</button></div><div id="msg"></div></div>
+      <textarea id="paste" rows="3" placeholder="JZ2z.…" style="font-family:monospace" aria-label="Student codes"></textarea>
+      <div class="row" style="margin-top:6px"><button class="btn" id="add">Add</button><input type="file" id="files" accept=".txt,.json" multiple style="width:auto" aria-label="Student code files"><button class="btn alt" id="clear">Clear class</button></div><div id="msg" role="status"></div></div>
     ${rows.length ? `<h2>Students (${rows.length})</h2><div style="overflow:auto"><table><tr><th>Name</th><th>Points</th>${units.map((u) => `<th>Unit ${u}</th>`).join("")}<th>Updated</th></tr>
-      ${rows.map((r) => { const { units: us } = stats(subsOf(r)); return `<tr><td>${esc(r.n)}<div class="muted" style="font-size:12px">${esc(r.e)}</div></td><td>${total(r)}</td>${units.map((u) => `<td>${pct(us["Unit " + u].got, us["Unit " + u].max)}%</td>`).join("")}<td class="muted">${fmt(r.t)}</td></tr>`; }).join("")}</table></div>
-    <h2>Question × student</h2><select id="tp">${topics.map((t) => `<option ${t === topic ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>
+      ${rows.map((r) => { const { units: us } = stats(subsOf(r)); return `<tr><td>${esc(r.n)}${r.w.length ? ` <span class="warn" title="${esc(r.w.join("; "))}">⚠</span>` : ""}<div class="muted" style="font-size:12px">${esc(r.e)}</div></td><td>${total(r)}</td>${units.map((u) => `<td>${pct(us["Unit " + u].got, us["Unit " + u].max)}%</td>`).join("")}<td class="muted">${fmt(r.t)}</td></tr>`; }).join("")}</table></div>
+    <p class="muted">⚠ = the code looked edited or had impossible scores (hover for the reason). Scores in this version are self-reported by the student's browser.</p>
+    <h2>Question × student</h2><select id="tp" aria-label="Topic">${topics.map((t) => `<option ${t === topic ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>
     <p class="muted">✓ full points · number = partial · 0 = tried, not passed · · = not tried · 👁 = looked at the solution. Hover for tries.</p>
     <div style="overflow:auto"><table><tr><th>Student</th>${cols.map((p, i) => `<th title="${esc(p.title)} (${p.points}p)" style="text-align:center">${i + 1}</th>`).join("")}<th>%</th></tr>
-      ${rows.map((r) => `<tr><td>${esc(r.n)}</td>${cols.map((p) => cell(r, p)).join("")}<td>${pct(cols.reduce((a, p) => a + Math.min(r.s[p.id]?.[0] || 0, p.points), 0), cols.reduce((a, p) => a + p.points, 0))}%</td></tr>`).join("")}</table></div>
+      ${rows.map((r) => `<tr><td>${esc(r.n)}</td>${cols.map((p) => cell(r, p)).join("")}<td>${pct(cols.reduce((acc, p) => acc + Math.min(r.s[p.id]?.[0] || 0, p.points), 0), cols.reduce((acc, p) => acc + p.points, 0))}%</td></tr>`).join("")}</table></div>
     <ol>${cols.map((p) => `<li>${esc(p.title)} <span class="muted">${LEVELS[p.d]} · ${KINDS[p.kind]} · ${p.points}p</span></li>`).join("")}</ol>` : '<p class="muted">No students added yet.</p>'}`;
-  const add = (text) => {
-    let ok = 0, bad = 0; const c = loadClass();
-    text.split(/\s+/).filter(Boolean).forEach((tok) => {
-      try { if (!tok.startsWith("JZ1.")) throw 0; const o = unb64(tok.slice(4)); const old = c[o.e]; if (!old || old.t <= o.t) c[o.e] = o; ok++; } catch { bad++; }
-    });
+  const add = async (text) => {
+    const c = loadClass(); let ok = 0; const bad = [], warns = [];
+    for (const tok of text.split(/\s+/).filter(Boolean)) {
+      try { const r = await parseCode(tok); const old = c[r.e]; if (!old || old.t <= r.t) c[r.e] = r; ok++; if (r.w.length) warns.push(`${r.n}: ${r.w.join(", ")}`); }
+      catch (e) { bad.push(e.message); }
+    }
     try { localStorage.setItem("jz:class", JSON.stringify(c)); } catch {}
-    admin(); $("#msg").innerHTML = `<p class="${bad ? "warn" : "ok"}">${ok} added${bad ? `, ${bad} not understood` : ""}</p>`;
+    admin();
+    $("#msg").innerHTML = `<p class="${bad.length ? "warn" : "ok"}">${ok} added${bad.length ? `, ${bad.length} rejected (${esc([...new Set(bad)].join("; "))})` : ""}</p>` + warns.map((x) => `<p class="warn">⚠ ${esc(x)}</p>`).join("");
   };
   $("#add").onclick = () => add($("#paste").value);
   $("#files").onchange = async (e) => { add((await Promise.all([...e.target.files].map((f) => f.text()))).join("\n")); };
