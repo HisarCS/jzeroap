@@ -35,6 +35,7 @@ async function boot() {
     app.innerHTML = `<div class="card bad">Could not load the questions: ${esc(e.message)}</div>`;
     return;
   }
+  Q = Q.filter((p) => unitOf(p.topic) <= 2);   // only Units 1-2 are open this year
   Q.forEach((p) => (QM[p.id] = p));
   window.addEventListener("hashchange", route);
   route();
@@ -42,7 +43,8 @@ async function boot() {
 
 function nav() {
   const link = (h, t) => `<a href="#${h}" class="${location.hash.replace(/\?.*/, "") === "#" + h ? "on" : ""}">${t}</a>`;
-  $("#nav").innerHTML = st.name ? link("/", "Questions") + link("/me", "📊 My progress") + link("/share", "📤 Share") + link("/admin", "Teacher") : "";
+  $("#nav").innerHTML = st.name ? link("/", "Questions") + link("/me", "📊 My progress") + link("/share", "📤 Send to teacher") + '<a href="#/admin" class="muted" style="font-size:13px">Teacher</a>' + '<button id="who" class="muted" style="font-size:13px" title="Switch student">' + esc(st.name.split(" ")[0]) + ' ⎋</button>' : "";
+  $("#who")?.addEventListener("click", () => { if (confirm("Switch student? Your progress stays saved in this browser for the next sign-in.")) { st.name = ""; st.email = ""; location.hash = "/"; route(); } });
 }
 
 function route() {
@@ -57,17 +59,37 @@ function route() {
 }
 
 function welcome() {
-  app.innerHTML = `<div class="card" style="max-width:440px;margin:40px auto">
-    <h1>☕ JavaZero</h1><p>AP CSA practice, from easy to hard. Your progress is saved in this browser.</p>
+  app.innerHTML = `<div class="card hero">
+    <div class="big">☕ JavaZero</div>
+    <div class="badge">AP CSA · Hisar 2026–2027</div>
+    <p class="muted">Practice Java from easy to hard — Unit 1 and Unit 2. Every question is checked instantly.</p>
     <label>Your name</label><input id="nm" autocomplete="name" placeholder="First Last">
-    <label>School e-mail (@${DOMAIN})</label><input id="em" type="email" placeholder="name@${DOMAIN}">
-    <p><button class="btn" id="go">Start</button></p><div id="msg"></div><p class="muted"><a href="#/admin">Teacher view</a></p></div>`;
-  $("#go").onclick = () => {
-    const name = $("#nm").value.trim(), email = $("#em").value.trim().toLowerCase();
+    <label>School e-mail</label><input id="em" type="email" autocomplete="email" placeholder="name@${DOMAIN}">
+    <p><button class="btn big-btn" id="go">Start</button></p><div id="msg"></div>
+    <p class="muted" style="font-size:13px">Your progress is saved in this browser. Teacher? <a href="#/admin">Open the class view</a>.</p></div>`;
+  const go = () => {
+    const name = $("#nm").value.trim().replace(/\s+/g, " "), email = $("#em").value.trim().toLowerCase();
     if (!name) return ($("#msg").innerHTML = '<p class="warn">Please enter your name.</p>');
-    if (!email.endsWith("@" + DOMAIN)) return ($("#msg").innerHTML = `<p class="warn">Use your @${DOMAIN} e-mail.</p>`);
-    st.name = name; st.email = email; save(); route();
+    if (!email.endsWith("@" + DOMAIN)) return ($("#msg").innerHTML = `<p class="warn">Please use your school e-mail (…@${DOMAIN}).</p>`);
+    st.name = name; st.email = email; save(); location.hash = "/"; route();
   };
+  $("#go").onclick = go;
+  app.querySelectorAll("input").forEach((i) => i.addEventListener("keydown", (e) => e.key === "Enter" && go()));
+  $("#nm").focus();
+}
+
+/* ---------------- navigation helpers ---------------- */
+const byOrder = (a, b) => topicSort(a.topic, b.topic) || a.d - b.d;
+const unsolved = (p) => best(p) < p.points;
+function nextUp() {
+  const recent = Object.entries(st.subs).filter(([id, v]) => v.at && QM[id] && unsolved(QM[id])).sort((a, b) => b[1].at.localeCompare(a[1].at))[0];
+  if (recent) return QM[recent[0]];
+  return [...Q].sort(byOrder).find(unsolved) || null;
+}
+function nextAfter(p) {
+  const same = Q.filter((x) => x.topic === p.topic).sort((a, b) => a.d - b.d);
+  const i = same.findIndex((x) => x.id === p.id);
+  return same.slice(i + 1).find(unsolved) || same.find((x) => unsolved(x) && x.id !== p.id) || null;
 }
 
 /* ---------------- home ---------------- */
@@ -78,13 +100,18 @@ function home() {
   if (!topic) {
     const topics = [...new Set(Q.map((p) => p.topic))].sort(topicSort);
     const units = [...new Set(topics.map(unitOf))];
-    app.innerHTML = `<h1>Questions</h1><p class="muted">Hi ${esc(st.name)}! Pick a topic. Questions go from easy to hard.</p>` + units.map((u) => {
+    const UNIT_NAMES = { 1: "Using Objects and Methods", 2: "Selection and Iteration" };
+    const next = nextUp();
+    const tried = Object.keys(st.subs).length;
+    const intro = tried ? "" : `<div class="steps"><div class="step"><b>1 · Pick a topic</b><br>Start with Unit 1 or choose any topic.</div><div class="step"><b>2 · Solve</b><br>Questions go from easy to hard. Run the samples before you submit.</div><div class="step"><b>3 · Grow</b><br>Full points on the first try; each wrong attempt costs 25%.</div></div>`;
+    const cont = next ? `<a class="card tile" href="#/p/${next.id}"><div class="grow"><div class="muted">${tried ? "Continue where you left off" : "Start here"}</div><b>${esc(next.title)}</b> <span class="muted">· ${esc(next.topic)}</span></div><span class="btn">${tried ? "Continue →" : "Start →"}</span></a>` : '<div class="card">🎉 You have solved every question!</div>';
+    app.innerHTML = `<h1>Hi ${esc(st.name.split(" ")[0])} 👋</h1>${intro}${cont}` + units.map((u) => {
       const ups = Q.filter((p) => unitOf(p.topic) === u);
-      return `<div class="card"><div class="row"><h2 class="grow" style="margin:0">Unit ${u}</h2><b>${pct(got(ups), max(ups))}%</b></div>
+      return `<div class="card"><div class="row"><h2 class="grow" style="margin:0">Unit ${u} · ${UNIT_NAMES[u] || ""}</h2><b>${pct(got(ups), max(ups))}%</b></div>
         <div class="bar" style="margin:8px 0"><i style="width:${pct(got(ups), max(ups))}%"></i></div>
         ${topics.filter((t) => unitOf(t) === u).map((t) => { const tp = Q.filter((p) => p.topic === t);
           return `<a class="row" href="#/?topic=${encodeURIComponent(t)}" style="text-decoration:none;color:inherit;padding:4px 0">
-            <span class="grow">${esc(t)} <span class="muted">(${tp.length})</span></span><div class="bar" style="width:120px"><i style="width:${pct(got(tp), max(tp))}%"></i></div><span style="width:44px;text-align:right">${pct(got(tp), max(tp))}%</span></a>`; }).join("")}</div>`;
+            <span class="grow">${esc(t)} <span class="muted">${tp.filter((p) => best(p) >= p.points).length}/${tp.length} done</span></span><div class="bar" style="width:80px;flex:none"><i style="width:${pct(got(tp), max(tp))}%"></i></div><span style="width:44px;text-align:right">${pct(got(tp), max(tp))}%</span></a>`; }).join("")}</div>`;
     }).join("");
     return;
   }
@@ -193,8 +220,11 @@ function problemPage(p) {
     s.tries++; if (frac < 1 && s.best < p.points) s.fails = (s.fails || 0) + 1;
     s.best = Math.max(s.best, pts(frac)); s.at = new Date().toISOString(); save();
     const note = f < 1 && frac > 0 ? `<p class="warn">Points are ${Math.round(f * 100)}% of the full value because of earlier wrong attempts${s.peeked ? " or looking at the solution" : ""}.</p>` : "";
+    const nx = nextAfter(p);
+    const nextBtn = frac === 1 && nx ? `<p><a class="btn" href="#/p/${nx.id}">Next question →</a></p>` : frac === 1 ? `<p><a class="btn" href="#/?topic=${encodeURIComponent(p.topic)}">Back to topic →</a></p>` : "";
     const left = frac < 1 ? `<p class="muted">Next attempt is worth at most ${Math.round(p.points * factor(s))} points.</p>` : "";
-    $("#res").innerHTML = html + note + left;
+    $("#res").innerHTML = html + note + left + nextBtn;
+    $("#res").scrollIntoView({ behavior: "smooth", block: "nearest" });
   };
 }
 function report(p, cases, samples, score) {
