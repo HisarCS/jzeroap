@@ -23,7 +23,9 @@ function load() {
   try { return JSON.parse(localStorage.getItem("jz:v1")) || { name: "", email: "", subs: {} }; } catch { return { name: "", email: "", subs: {} }; }
 }
 function save() { try { localStorage.setItem("jz:v1", JSON.stringify(st)); } catch {} }
-const sub = (id) => (st.subs[id] ||= { best: 0, tries: 0, peeked: false, last: null, at: null });
+const sub = (id) => (st.subs[id] ||= { best: 0, tries: 0, fails: 0, peeked: false, last: null, at: null });
+// Full points on the first try; each failed attempt costs 25% (floor 25%). Looking at the solution first caps it at 25%.
+const factor = (s) => Math.min(s.peeked ? 0.25 : 1, Math.max(0.25, 1 - 0.25 * (s.fails || 0)));
 const best = (p) => Math.min(st.subs[p.id]?.best || 0, p.points);
 
 async function boot() {
@@ -145,7 +147,7 @@ function problemPage(p) {
   app.innerHTML = `
     <p><a href="#/?topic=${encodeURIComponent(p.topic)}">← ${esc(p.topic)}</a></p>
     <h1>${esc(p.title)}</h1>
-    <div class="row">${diff(p.d)} <span class="pill">${CATS[p.category] || ""}</span> <span class="pill">${KINDS[p.kind]}</span> <span class="pill">${best(p)}/${p.points} points</span></div>
+    <div class="row">${diff(p.d)} <span class="pill">${CATS[p.category] || ""}</span> <span class="pill">${KINDS[p.kind]}</span> <span class="pill">${best(p)}/${p.points} points</span> ${best(p) >= p.points ? "" : `<span class="pill" title="Each wrong attempt costs 25%; looking at the solution caps it at 25%">available now: ${Math.round(p.points * factor(s))}</span>`}</div>
     <div class="card" style="white-space:pre-wrap">${esc(p.statement)}</div>
     ${(p.samples || []).map((x, i) => `<div class="row"><div class="grow"><b>Sample input ${i + 1}</b><pre>${esc(x.input)}</pre></div><div class="grow"><b>Output</b><pre>${esc(x.output)}</pre></div></div>`).join("")}
     ${input}
@@ -170,24 +172,29 @@ function problemPage(p) {
     const c = content();
     if (c == null || (Array.isArray(c) && c.every((x) => !x.trim()))) return ($("#res").innerHTML = '<p class="warn">Answer first.</p>');
     $("#res").innerHTML = '<p class="muted">Checking…</p>';
-    let score = 0, html = "";
+    const f = factor(s);                       // penalty from earlier wrong attempts / peeking
+    const pts = (frac) => Math.round(p.points * frac * f);
+    let frac = 0, html = "";
     try {
       if (p.kind === "mcq") {
-        const ok = Number(c) === p.answer; score = ok ? p.points : 0;
-        html = `<div class="card ${ok ? "ok" : "bad"}">${ok ? "✅ Correct! +" + p.points : "❌ Not quite — try again."}</div>`;
+        frac = Number(c) === p.answer ? 1 : 0;
+        html = `<div class="card ${frac ? "ok" : "bad"}">${frac ? "✅ Correct! +" + pts(1) : "❌ Not quite — try again."}</div>`;
       } else if (p.kind === "fill") {
         const oks = p.blanks.map((acc, i) => acc.map(norm).includes(norm(c[i])));
-        const n = oks.filter(Boolean).length; score = Math.round((p.points * n) / p.blanks.length);
-        html = `<div class="card"><b>${n === p.blanks.length ? "✅ All correct" : "Result"}: ${n}/${p.blanks.length} blanks · +${score}</b><div>${oks.map((b, i) => `<span class="${b ? "ok" : "bad"}">Blank ${i + 1}: ${b ? "✓" : "✗"}</span>`).join(" · ")}</div></div>`;
+        const n = oks.filter(Boolean).length; frac = n / p.blanks.length;
+        html = `<div class="card"><b>${n === p.blanks.length ? "✅ All correct" : "Result"}: ${n}/${p.blanks.length} blanks · +${pts(frac)}</b><div>${oks.map((b, i) => `<span class="${b ? "ok" : "bad"}">Blank ${i + 1}: ${b ? "✓" : "✗"}</span>`).join(" · ")}</div></div>`;
       } else {
         const cases = await runTests(p, c, p.tests);
-        const n = cases.filter((x) => x.ok).length; score = Math.round((p.points * n) / p.tests.length);
-        html = report(p, cases, false, score);
+        frac = cases.filter((x) => x.ok).length / p.tests.length;
+        html = report(p, cases, false, pts(frac));
         s.last = c;
       }
     } catch (e) { return ($("#res").innerHTML = `<div class="card bad">${esc(e.message)}</div>`); }
-    s.tries++; s.best = Math.max(s.best, score); s.at = new Date().toISOString(); save();
-    $("#res").innerHTML = html;
+    s.tries++; if (frac < 1 && s.best < p.points) s.fails = (s.fails || 0) + 1;
+    s.best = Math.max(s.best, pts(frac)); s.at = new Date().toISOString(); save();
+    const note = f < 1 && frac > 0 ? `<p class="warn">Points are ${Math.round(f * 100)}% of the full value because of earlier wrong attempts${s.peeked ? " or looking at the solution" : ""}.</p>` : "";
+    const left = frac < 1 ? `<p class="muted">Next attempt is worth at most ${Math.round(p.points * factor(s))} points.</p>` : "";
+    $("#res").innerHTML = html + note + left;
   };
 }
 function report(p, cases, samples, score) {
