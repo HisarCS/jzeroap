@@ -1,5 +1,5 @@
-:root{--bg:#fff;--fg:#1c2230;--muted:#667;--card:#f4f6fa;--line:#dde2ec;--accent:#e8590c;--ok:#2b8a3e;--bad:#c92a2a;--warn:#e67700}
-@media (prefers-color-scheme:dark){:root{--bg:#12151c;--fg:#e8ebf2;--muted:#9aa3b5;--card:#1b202b;--line:#2c3342;--accent:#ff8a3d;--ok:#51cf66;--bad:#ff6b6b;--warn:#fcc419}}
+:root{--bg:#fff;--fg:#1c2230;--muted:#667;--card:#f4f6fa;--line:#dde2ec;--accent:#e8590c;--ok:#237032;--bad:#c92a2a;--warn:#9a5400;--link:#0b5cad;--onacc:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#12151c;--fg:#e8ebf2;--muted:#9aa3b5;--card:#1b202b;--line:#2c3342;--accent:#ff8a3d;--ok:#51cf66;--bad:#ff6b6b;--warn:#fcc419;--link:#8ab4ff;--onacc:#12151c}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif}
 header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;border-bottom:1px solid var(--line)}
@@ -14,7 +14,7 @@ h1{margin:.2em 0 .6em;font-size:24px}h2{font-size:18px;margin-top:1.4em}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .grow{flex:1}
 table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line)}
-button.btn,.btn{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer;text-decoration:none;display:inline-block}
+button.btn,.btn{background:var(--accent);color:var(--onacc);border:0;border-radius:8px;padding:8px 14px;font:inherit;cursor:pointer;text-decoration:none;display:inline-block}
 button.alt{background:var(--card);color:var(--fg);border:1px solid var(--line)}
 input,select,textarea{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px;width:100%}
 textarea.code{font:14px/1.45 ui-monospace,Menlo,monospace;min-height:340px;tab-size:4;white-space:pre}
@@ -22,10 +22,11 @@ pre{background:var(--card);padding:10px;border-radius:8px;overflow:auto;margin:6
 label{display:block;margin:10px 0 3px;font-size:14px;color:var(--muted)}
 .fill{line-height:2}.blank{width:auto;font:inherit;font-family:ui-monospace,monospace;padding:1px 4px}
 .pill{display:inline-block;padding:1px 9px;border-radius:99px;font-size:12px;border:1px solid var(--line)}
-.d1{color:var(--ok)}.d2{color:#74b816}.d3{color:var(--warn)}.d4{color:#f76707}.d5{color:var(--bad)}
+.d1{color:var(--ok)}.d2{color:#4c7a0b}.d3{color:var(--warn)}.d4{color:#b84500}.d5{color:var(--bad)}
+@media (prefers-color-scheme:dark){.d2{color:#74b816}.d4{color:#f76707}}
 .ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
 .bar{height:8px;background:var(--line);border-radius:4px;overflow:hidden}.bar i{display:block;height:100%;background:var(--accent)}
-.choice{display:block;padding:10px;border:1px solid var(--line);border-radius:8px;margin:6px 0;cursor:pointer;color:var(--fg);font-size:16px}
+.choice{display:block;white-space:pre-wrap;padding:10px;border:1px solid var(--line);border-radius:8px;margin:6px 0;cursor:pointer;color:var(--fg);font-size:16px}
 .choice input{width:auto;margin-right:8px}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px}
 @media(max-width:600px){main{padding:12px}}
@@ -41,3 +42,38 @@ footer{max-width:1000px;margin:30px auto 20px;padding:0 16px;color:var(--muted);
 .steps{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
 .step{flex:1;min-width:130px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;font-size:14px}
 .btn.big-btn{padding:12px 22px;font-size:17px}
+.explain{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;padding:10px 14px;margin:10px 0}.explain p{margin:4px 0 0;white-space:pre-wrap}
+.chip{padding:2px 8px;border-radius:99px;border:1px solid var(--line);background:var(--card);font-size:13px}
+.tq{margin:12px 0}.tq legend{padding:0 6px}
+.badge-card.locked{opacity:.5;filter:grayscale(1)}
+#hints .btn{margin-top:8px}
+a{color:var(--link)}a:visited{color:var(--link)}
+a.logo,a.logo:visited{color:var(--accent)}nav a,nav a:visited{color:var(--fg)}
+a.btn,a.btn:visited{color:var(--onacc)}a.tile,a.tile:visited{color:inherit}
+a.pill{text-decoration:none;color:var(--link);padding:3px 11px}a.pill:hover{border-color:var(--accent)}
+:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.choice:focus-within{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+fieldset.mcq{border:0;margin:0;padding:0;min-width:0}
+.scroll{overflow-x:auto;max-width:100%}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid var(--line);border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes sp{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.spin{animation-duration:3s}}
+.part{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;padding:10px 14px;margin:10px 0}
+.part h2{margin:0 0 4px;font-size:16px}.part p{margin:4px 0;white-space:pre-wrap}.part ul{margin:4px 0;padding-left:22px}
+.fail{font-weight:600}
+.explain:focus{outline:3px solid var(--accent)}
+.card,.explain{overflow-wrap:anywhere}
+/* teacher dashboard, assignments */
+.sortb{background:none;border:0;padding:0;font:inherit;font-weight:700;color:inherit;cursor:pointer;text-align:left}
+.sortb:hover{text-decoration:underline}
+.brow{display:flex;gap:10px;align-items:center;margin:6px 0}.brow .blab{flex:0 1 300px;min-width:0;overflow-wrap:anywhere}.brow .bar{min-width:60px}.brow .bval{width:56px;text-align:right}
+.pick{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:2px 8px}
+.pickrow{border:0;border-bottom:1px solid var(--line);border-radius:0;margin:0;padding:8px 4px;font-size:15px}
+ul.asg{list-style:none;margin:0;padding:0}
+ul.asg li{border-left:4px solid var(--line);padding:6px 10px;margin:8px 0}
+ul.asg li.soon,.asgc.soon{border-left:4px solid var(--warn)}
+ul.asg li.overdue,.asgc.overdue{border-left:4px solid var(--bad)}
+ul.asg li.done{border-left-color:var(--ok)}
+.asgc.soon,.asgc.overdue{border-left-width:4px}
+@media(max-width:600px){.brow{flex-wrap:wrap}.brow .blab{flex:1 1 100%}}
