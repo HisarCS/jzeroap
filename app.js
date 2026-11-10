@@ -613,7 +613,7 @@ async function testServer(u) {
   app.innerHTML = `<p><a href="#/">← Units</a></p><h1>Unit ${u} closing test</h1><div id="res"></div>`;
   const stop = busy($("#res"), "Getting your test…"), fail = (e, retry) => { stop(); if (e.ended || !$("#res")) return; $("#res").innerHTML = `<div class="card bad" role="alert">${esc(e.message)}</div>${retry ? '<p><button class="btn" id="retry">Try again</button></p>' : ""}`; $("#retry")?.addEventListener("click", () => testServer(u)); };
   let r;
-  try { r = await srv("testStart", undefined, undefined, { unit: u }); } catch (e) { return fail(e, !/no test|unknown unit/i.test(e.raw || "")); }
+  try { r = await srv("testStart", undefined, undefined, { unit: u }); } catch (e) { return fail(e, !/no test|unknown unit|new unit \d+ test in/i.test(e.raw || "")); }
   const qs = (Array.isArray(r.questions) ? r.questions : []).filter(goodQ).slice(0, 40), attempt = Number.isInteger(r.attempt) ? r.attempt : 0;
   if (!$("#res")) return;
   if (!qs.length) return fail(new Error("There is no closing test for this unit yet."), false);
@@ -668,9 +668,9 @@ function testServerResult(u, x, qs, total) {
     <h2>Weak-topic report</h2>${weak.length ? `<p>Practise these topics first:</p><ul>${weak.map((tp) => `<li><a href="#/?topic=${encodeURIComponent(tp)}">${esc(tp)}</a> <span class="muted">— practise</span></li>`).join("")}</ul>` : '<p class="ok">No weak topics in this test. Nice work!</p>'}
     <div class="scroll"><table><tr><th>Topic</th><th>Correct</th><th>%</th></tr>${topics.map((t) => `<tr><td>${esc(t.topic)}</td><td class="${t.c === t.n ? "ok" : t.c / t.n < 0.6 ? "bad" : "warn"}">${t.c}/${t.n}</td><td>${pct(t.c, t.n)}%</td></tr>`).join("")}</table></div>
     <h2>Review</h2>${rv.map((r, i) => { const q = byId[r.id]; return `<div class="card"><b>${i + 1}. ${r.correct ? "✅" : "❌"}</b> <span class="muted">${esc(q.topic || "")}</span><div style="white-space:pre-wrap">${esc(q.statement)}</div>
-      <p style="white-space:pre-wrap">Your answer: ${r.yours == null ? "<i>none</i>" : esc(L(q, r.yours))}${r.correct ? "" : `<br>Correct answer: <b>${esc(L(q, r.answer))}</b>`}</p>
+      <p style="white-space:pre-wrap">Your answer: ${r.yours == null ? "<i>none</i>" : esc(L(q, r.yours))}${r.correct ? "" : Number.isInteger(r.answer) ? `<br>Correct answer: <b>${esc(L(q, r.answer))}</b>` : '<br><span class="muted">The correct answer is shown only for questions you answered.</span>'}</p>
       ${r.explanation ? `<div class="explain" role="note"><b>Explanation</b><p>${esc(r.explanation)}</p></div>` : ""}</div>`; }).join("")}
-    <p><button class="btn" id="again">Take a new test</button></p>`;
+    <p><button class="btn" id="again">Take a new test</button>${Number(x.nextTestInMin) > 0 ? ` <span class="muted">A new Unit ${u} test opens ${Number(x.nextTestInMin)} minutes after this one.</span>` : ""}</p>`;
   $("#again").onclick = () => testServer(u);
 }
 function testResult(u, t, qs) {
