@@ -293,7 +293,7 @@ async function api(path, opts, tries = 3) {
 async function judgeMany(source, inputs) {
   const created = await api("/submissions/batch?base64_encoded=false", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ submissions: inputs.map((stdin) => ({ language_id: 62, source_code: source, stdin, cpu_time_limit: 3, memory_limit: 256000 })) }),
+    body: JSON.stringify({ submissions: inputs.map((stdin) => ({ language_id: 62, source_code: source, stdin, cpu_time_limit: 3, wall_time_limit: 5, memory_limit: 256000 })) }),
   });
   const tokens = created.map((x) => x.token);
   if (tokens.some((t) => !t)) throw new Error("The code runner rejected the program. Nothing was counted.");
@@ -490,9 +490,11 @@ function statementHtml(p) {
 function report(p, cases, samples, score) {
   const n = cases.filter((x) => x.ok).length, fr = p.kind === "project", nm = fr ? "Scenario" : "Test";
   const why = (c) => (c.status && !/^accepted$/i.test(c.status) ? c.status : "Wrong answer");   // a failed test is never "Accepted"
+  const tle = (c) => !c.ok && /time limit/i.test(c.status || "") ? `<div class="muted">Your program did not finish in time: check for a loop that never ends, or a Scanner waiting for input that never comes.</div>` : "";
+  const mine = (c) => !samples && !c.ok && typeof c.got === "string" ? `<pre>your output:\n${c.got ? esc(c.got) : "(nothing)"}</pre>` : "";   // FRQ scenarios: the student's own output (never the expected one)
   return `<div class="card"><b>${samples ? "Sample results" : n === cases.length ? "✅ Accepted" : "Result"}: ${n}/${cases.length} ${fr ? "scenarios" : "tests"}${samples ? "" : " · +" + plural(score, "point")}</b>
     ${cases.map((c, i) => `<div class="${c.ok ? "ok" : "bad fail"}">${c.ok ? "✓" : "✗"} ${nm} ${c.n ?? i + 1}: ${c.ok ? "passed" : esc(why(c))}
-      ${samples && !c.ok ? `<pre>${fr ? "" : `input:\n${esc(c.input)}\n`}expected:\n${esc(c.expected)}\ngot:\n${esc(c.got)}</pre>` : ""}${c.error ? `<pre>${esc(c.error)}</pre>` : ""}</div>`).join("")}</div>`;
+      ${samples && !c.ok ? `<pre>${fr ? "" : `input:\n${esc(c.input)}\n`}expected:\n${esc(c.expected)}\ngot:\n${esc(c.got)}</pre>` : ""}${mine(c)}${c.error ? `<pre>${esc(c.error)}</pre>` : ""}${tle(c)}</div>`).join("")}</div>`;
 }
 
 /* ---------------- hints ---------------- */
